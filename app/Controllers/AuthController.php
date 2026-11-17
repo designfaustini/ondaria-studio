@@ -3,8 +3,10 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
+use App\Core\Audit;
 use App\Core\Auth;
 use App\Core\DB;
+use App\Services\Legal;
 use App\Core\Security;
 use App\Core\Session;
 use App\Services\Stations;
@@ -19,19 +21,24 @@ final class AuthController
     public function login(): void
     {
         $email = mb_strtolower((string) input('email', ''));
-        if (!Security::throttle('login:' . Security::clientIp(), 20, 900) || !Security::throttle('login:' . $email, 8, 900)) {
-            flash('error', 'Muitas tentativas. Aguarde 15 minutos.');
+        // Achado F4: o limite por conta é contado junto com o IP, para um anônimo não travar o login de outra pessoa.
+        if (!Security::throttle('login:' . Security::clientIp(), 20, 900) || !Security::throttle('login:' . $email . '|' . Security::clientIp(), 8, 900)) {
+            field_errors(['password' => 'Muitas tentativas seguidas. Por segurança, espere 15 minutos e tente de novo.'], $_POST);
             redirect('/entrar');
         }
         if (!Auth::attempt($email, (string) ($_POST['password'] ?? ''))) {
-            remember_input($_POST);
-            flash('error', 'E-mail ou senha incorretos.');
+            field_errors(['password' => 'E-mail ou senha não conferem. Confira os dois e tente de novo.'], $_POST);
             redirect('/entrar');
         }
         $intended = (string) Session::get('intended', '');
         Session::forget('intended');
         if (Auth::user()['role'] === 'superadmin') {
             redirect('/admin');
+        }
+        // O endereço guardado já contém APP_BASE_PATH; tira para o redirect não repetir a base.
+        $base = rtrim((string) env('APP_BASE_PATH', ''), '/');
+        if ($base !== '' && str_starts_with($intended, $base)) {
+            $intended = substr($intended, strlen($base)) ?: '/';
         }
         redirect(str_starts_with($intended, '/') && !str_starts_with($intended, '//') ? $intended : '/estudio');
     }
@@ -59,27 +66,29 @@ final class AuthController
         $pass = (string) ($_POST['password'] ?? '');
         $tz = (string) input('timezone', 'America/Sao_Paulo');
         $errors = [];
-        if (mb_strlen($station) < 2 || mb_strlen($station) > 120) $errors[] = 'Informe o nome da rádio.';
-        if (mb_strlen($name) < 2 || mb_strlen($name) > 120) $errors[] = 'Informe seu nome.';
-        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) $errors[] = 'E-mail inválido.';
-        if (strlen($pass) < 10) $errors[] = 'A senha precisa ter pelo menos 10 caracteres.';
+        if (mb_strlen($station) < 2 || mb_strlen($station) > 120) $errors['station'] = 'Digite o nome da rádio (de 2 a 120 caracteres).';
+        if (mb_strlen($name) < 2 || mb_strlen($name) > 120) $errors['name'] = 'Digite seu nome.';
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) $errors['email'] = 'Digite um e-mail válido, como nome@dominio.com.br.';
+        if (strlen($pass) < 10) $errors['password'] = 'Use pelo menos 10 caracteres na senha.';
         if (!in_array($tz, \DateTimeZone::listIdentifiers(), true)) $tz = 'America/Sao_Paulo';
-        if (!$errors && DB::value('SELECT 1 FROM users WHERE email = ?', [$email])) $errors[] = 'Já existe uma conta com este e-mail.';
-        if (empty($_POST['terms'])) $errors[] = 'Aceite os termos de uso.';
+        if (!isset($errors['email']) && DB::value('SELECT 1 FROM users WHERE email = ?', [$email])) $errors['email'] = 'Este e-mail já tem conta. Entre com ele ou use outro e-mail.';
+        if (empty($_POST['terms'])) $errors['terms'] = 'Para continuar, aceite os termos.';
         if ($errors) {
-            foreach ($errors as $err) {
-                flash('error', $err);
-            }
+            field_errors($errors, $_POST);
             redirect('/cadastro');
         }
         // Toda rádio começa no plano gratuito; a troca de plano é feita pelo administrador da plataforma.
         $planId = (int) DB::value("SELECT id FROM plans WHERE slug = 'gratis'") ?: (int) DB::value('SELECT MIN(id) FROM plans');
         $userId = DB::transaction(static function () use ($station, $planId, $tz, $name, $email, $pass): int {
             $sid = Stations::create($station, $planId, $tz);
-            return DB::insert('users', ['station_id' => $sid, 'name' => $name, 'email' => $email, 'password_hash' => password_hash($pass, PASSWORD_DEFAULT), 'role' => 'owner']);
+            return DB::insert('users', ['station_id' => $sid, 'name' => $name, 'email' => $email, 'password_hash' => password_hash($pass, PASSWORD_DEFAULT), 'role' => 'owner',
+                // Prova do aceite (LGPD art. 8º e CDC): versão dos termos e data/hora.
+                'terms_version' => Legal::termsVersion(), 'terms_accepted_at' => now()]);
         });
         Auth::login($userId);
-        flash('success', 'Rádio criada! Envie suas músicas na Biblioteca e monte a primeira lista.');
+        Audit::access('cadastro', $userId);
+        Audit::record('station.create', 'station', $station);
+        flash('success', "Pronto, a {$station} foi criada. Agora envie as músicas: arraste os arquivos para a área abaixo.");
         redirect('/biblioteca');
     }
 

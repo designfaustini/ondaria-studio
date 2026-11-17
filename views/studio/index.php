@@ -11,40 +11,37 @@
 
 <div id="studio" hidden>
   <header class="top">
-    <div class="station"><img src="<?= e(asset('img/icon.svg')) ?>" alt="" width="22" height="22"> <b id="stname"></b> <span id="leader" class="pill"></span></div>
-    <nav class="menu">
-      <?= $link('/biblioteca', 'Biblioteca') ?><?= $link('/listas', 'Listas') ?><?= $link('/eventos', 'Eventos') ?><?= $link('/vinhetas', 'Vinhetas') ?><?= $link('/sweepers', 'Sweepers') ?><?= $link('/registro', 'Registro') ?>
-      <?php if ($manager): ?><?= $link('/opcoes', 'Opções') ?><?= $link('/usuarios', 'Usuários') ?><?php endif ?>
-    </nav>
+    <div class="station"><img src="<?= e(asset('img/icon.svg')) ?>" alt="" width="22" height="22"> <b id="stname"></b> <button type="button" id="leader" class="pill"></button></div>
     <div class="clock"><span id="date"></span> <b id="clock">--:--:--</b> <span id="weather"></span></div>
+    <span class="spacer"></span>
     <button id="btnStream" class="pill" hidden>Transmitir</button>
-    <button id="btnDevices" title="Placas de som e entradas">Dispositivos</button>
-    <form method="post" action="<?= e(url('/sair')) ?>" id="logoutform"><?= csrf_field() ?><button title="Sair">Sair</button></form>
+    <div class="dropdown">
+      <button data-menu="managemenu" aria-haspopup="true" aria-expanded="false">Gerenciar ▾</button>
+      <div class="dropmenu dropmenu-right" id="managemenu" hidden>
+        <?= $link('/biblioteca', 'Biblioteca (enviar arquivos)') ?><?= $link('/eventos', 'Eventos') ?><?= $link('/listas', 'Listas') ?><?= $link('/vinhetas', 'Vinhetas') ?><?= $link('/sweepers', 'Sweepers') ?><?= $link('/registro', 'Registro de execução') ?>
+        <?php if ($manager): ?><hr><?= $link('/opcoes', 'Opções da rádio') ?><?= $link('/usuarios', 'Usuários') ?><?php endif ?>
+        <p class="menu-note">Abre em outra aba: o estúdio continua tocando.</p>
+      </div>
+    </div>
+    <div class="dropdown">
+      <button data-menu="usermenu" aria-haspopup="true" aria-expanded="false" title="<?= e(user()['name']) ?>"><span class="avatar" aria-hidden="true"><?= e(mb_strtoupper(mb_substr((string) user()['name'], 0, 1))) ?></span> ▾</button>
+      <div class="dropmenu dropmenu-right" id="usermenu" hidden>
+        <button id="btnDevices">Placas de som e microfone…</button>
+        <?= $link('/conta', 'Minha conta') ?>
+        <hr>
+        <form method="post" action="<?= e(url('/sair')) ?>" id="logoutform"><?= csrf_field() ?><button>Sair</button></form>
+      </div>
+    </div>
   </header>
 
   <div class="toolbar" role="toolbar" aria-label="Lista">
-    <button data-act="new" title="Nova lista">Nova</button>
-    <button data-act="open" title="Abrir lista">Abrir</button>
-    <button data-act="save" title="Salvar (Ctrl+S)">Salvar</button>
-    <button data-act="saveas">Salvar como</button>
-    <span class="sep"></span>
-    <button data-act="remove" title="Remover selecionados (Delete)">Remover</button>
-    <button data-act="copy" title="Copiar (Ctrl+C)">Copiar</button>
-    <button data-act="paste" title="Colar (Ctrl+V)">Colar</button>
-    <button data-act="find" title="Buscar na lista (Ctrl+F)">Buscar</button>
-    <span class="sep"></span>
-    <label class="mode">Modo
-      <select id="mode">
-        <option value="normal">Normal</option><option value="repeat">Repetir</option><option value="shuffle">Embaralhar</option><option value="random">Aleatório</option><option value="manual">Manual</option>
-      </select>
-    </label>
-    <button data-toggle="autodelete" title="Apagar cada faixa da lista depois de tocar">Apagar ao tocar</button>
-    <button data-toggle="loop" title="Repetir a faixa atual">Loop</button>
-    <button data-toggle="sweepers" class="on" title="Tocar sweepers sobre as músicas">Sweepers</button>
+    <button data-act="open" title="Abrir uma lista salva">Abrir</button>
+    <button data-act="save" id="btnSave" title="Salvar a lista (Ctrl+S)">Salvar</button>
     <span class="sep"></span>
     <div class="dropdown">
-      <button data-act="insertmenu">Inserir ▾</button>
+      <button data-menu="insertmenu" aria-haspopup="true" aria-expanded="false">+ Inserir ▾</button>
       <div class="dropmenu" id="insertmenu" hidden>
+        <p class="menu-note">Músicas: arraste da biblioteca à direita.</p>
         <button data-insert="time">Hora certa</button>
         <button data-insert="temperature">Temperatura</button>
         <button data-insert="humidity">Umidade</button>
@@ -61,19 +58,55 @@
         <button data-insert="rotation">Rotação…</button>
         <button data-insert="sequence">Sequência…</button>
         <button data-insert="events">Carregar grade de eventos…</button>
-        <hr>
-        <button data-act="shuffle">Embaralhar a lista</button>
-        <button data-act="sellength">Duração da seleção</button>
-        <button data-act="updlength">Atualizar duração da seleção</button>
       </div>
     </div>
     <span class="sep"></span>
-    <span id="auxbtns"></span>
+    <label class="mode">Modo
+      <select id="mode" title="Como a lista avança">
+        <option value="normal">Normal (para no fim)</option><option value="repeat">Repetir a lista</option><option value="shuffle">Embaralhar e repetir</option><option value="random">Aleatório</option><option value="manual">Manual (uma por vez)</option>
+      </select>
+    </label>
+    <div class="dropdown">
+      <button data-menu="playmenu" aria-haspopup="true" aria-expanded="false">Reprodução <span id="playbadges"></span> ▾</button>
+      <div class="dropmenu" id="playmenu" hidden>
+        <button data-toggle="sweepers" class="on" role="menuitemcheckbox" aria-checked="true">Tocar sweepers por cima das músicas</button>
+        <button data-toggle="loop" role="menuitemcheckbox" aria-checked="false">Repetir a faixa atual (loop)</button>
+        <button data-toggle="autodelete" role="menuitemcheckbox" aria-checked="false">Tirar da lista cada faixa que tocar</button>
+      </div>
+    </div>
+    <div class="dropdown">
+      <button data-menu="moremenu" aria-haspopup="true" aria-expanded="false">Mais ▾</button>
+      <div class="dropmenu" id="moremenu" hidden>
+        <button data-act="new">Nova lista vazia</button>
+        <button data-act="saveas">Salvar como…</button>
+        <button data-act="find">Buscar na lista <kbd>Ctrl F</kbd></button>
+        <hr>
+        <button data-act="shuffle">Embaralhar a lista agora</button>
+        <button data-act="updlength">Atualizar duração da seleção</button>
+      </div>
+    </div>
+    <span class="spacer"></span>
+    <div class="dropdown">
+      <button data-menu="auxmenu" aria-haspopup="true" aria-expanded="false">Players extras ▾</button>
+      <div class="dropmenu dropmenu-right" id="auxmenu" hidden><span id="auxbtns"></span></div>
+    </div>
   </div>
 
   <main class="grid">
     <section class="list-pane">
-      <div class="list-head"><b id="listname">Lista</b><span id="dirty" hidden>•</span><input id="findbox" type="search" placeholder="Buscar na lista…" hidden></div>
+      <div class="list-head">
+        <b id="listname">Lista</b>
+        <button id="dirty" class="dirty" hidden title="Salvar agora (Ctrl+S)">● Alterações não salvas — salvar</button>
+        <span class="spacer"></span>
+        <div class="selbar" id="selbar" hidden>
+          <span id="selcount"></span>
+          <button data-sel="next">Marcar como próxima</button>
+          <button data-sel="copy">Copiar</button>
+          <button data-sel="paste">Colar abaixo</button>
+          <button data-sel="remove" class="danger">Remover</button>
+        </div>
+        <div class="search" id="findwrap" hidden><input id="findbox" type="search" placeholder="Buscar na lista" aria-label="Buscar na lista"></div>
+      </div>
       <div class="list-scroll" id="listwrap"><table class="pl" id="playlist"><thead><tr><th class="n">#</th><th>Título</th><th class="d">Duração</th></tr></thead><tbody></tbody></table></div>
       <div class="list-foot"><span id="listinfo"></span></div>
     </section>
@@ -85,7 +118,7 @@
           <div><span class="lbl">Restante</span><b id="remain">--:--</b></div>
           <div><span class="lbl">Termina</span><b id="endat">--:--:--</b></div>
           <div class="tth">
-            <button id="btnTime" title="Hora certa">🕑</button><button id="btnTemp" title="Temperatura">🌡</button><button id="btnHum" title="Umidade">💧</button>
+            <button id="btnTime" title="Anunciar a hora agora" aria-label="Anunciar a hora">🕑</button><button id="btnTemp" title="Anunciar a temperatura agora" aria-label="Anunciar a temperatura">🌡</button><button id="btnHum" title="Anunciar a umidade agora" aria-label="Anunciar a umidade">💧</button>
           </div>
         </div>
         <div class="progress"><i id="progress"></i></div>
@@ -97,10 +130,10 @@
       <section class="events">
         <div class="pane-head">
           <b>Próximos eventos</b>
-          <button id="evPlay" title="Tocar eventos pendentes">▶</button>
-          <button id="evDiscard" title="Descartar pendentes">✕</button>
-          <button id="evToggle" class="on" title="Ativar/desativar eventos">Ativos</button>
-          <a href="<?= e(url('/eventos')) ?>" target="_blank" rel="noopener" title="Editar eventos">⏰</a>
+          <button id="evPlay" title="Tocar agora os eventos que estão esperando" aria-label="Tocar eventos pendentes" hidden>▶ Tocar pendentes</button>
+          <button id="evDiscard" title="Descartar os eventos que estão esperando" aria-label="Descartar eventos pendentes" hidden>Descartar</button>
+          <button id="evToggle" class="on" role="switch" aria-checked="true" title="Ligar ou desligar os eventos">Ligados</button>
+          <a href="<?= e(url('/eventos')) ?>" target="_blank" rel="noopener" title="Editar eventos (abre em outra aba)">Editar</a>
         </div>
         <ul id="evlist" class="evlist"></ul>
       </section>
@@ -108,8 +141,8 @@
       <section class="library">
         <div class="pane-head"><b>Biblioteca</b><a href="<?= e(url('/biblioteca')) ?>" target="_blank" rel="noopener">enviar arquivos</a></div>
         <div class="lib-filter">
-          <select id="libfolder"></select>
-          <input id="libq" type="search" placeholder="Buscar (aceita *)…">
+          <label class="sr-only" for="libfolder">Pasta</label><select id="libfolder"></select>
+          <div class="search"><label class="sr-only" for="libq">Buscar música</label><input id="libq" type="search" placeholder="Buscar música"></div>
         </div>
         <ul id="liblist" class="liblist"></ul>
         <p class="hint">Arraste para a lista, para uma vinheta ou para um player auxiliar. Duplo clique adiciona após a seleção.</p>
@@ -121,14 +154,14 @@
 
   <footer class="bottom">
     <div class="transport">
-      <button id="btnPlay" class="play" title="Tocar">▶</button>
-      <button id="btnPause" title="Pausar">❚❚</button>
-      <button id="btnStop" title="Parar">■</button>
-      <button id="btnNext" title="Próxima (para a atual e toca a marcada em verde)">⏭</button>
-      <button id="btnRew" title="Voltar 30 s">⏪</button>
-      <button id="btnFwd" title="Avançar 30 s">⏩</button>
-      <button id="btnStopAfter" title="Parar depois da faixa atual">Parar após</button>
-      <button id="btnTalk" title="Talk over: abaixa a música e abre o microfone">Talk over</button>
+      <button id="btnPlay" class="play" title="Tocar (a faixa em verde)" aria-label="Tocar">▶ Tocar</button>
+      <button id="btnNext" title="Pular: para a atual e toca a marcada em verde" aria-label="Pular para a próxima">⏭</button>
+      <button id="btnPause" title="Pausar" aria-label="Pausar" aria-pressed="false">❚❚</button>
+      <button id="btnStop" title="Parar" aria-label="Parar">■</button>
+      <button id="btnRew" title="Voltar 30 segundos" aria-label="Voltar 30 segundos">−30s</button>
+      <button id="btnFwd" title="Avançar 30 segundos" aria-label="Avançar 30 segundos">+30s</button>
+      <button id="btnStopAfter" title="Parar quando a faixa atual acabar" aria-pressed="false">Parar após esta</button>
+      <button id="btnTalk" title="Abaixa a música e abre o microfone" aria-pressed="false">🎙 Talk over</button>
     </div>
     <div class="jingles">
       <select id="jpage" title="Página de vinhetas"></select>

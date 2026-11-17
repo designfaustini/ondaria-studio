@@ -48,10 +48,13 @@ function el(tag, attrs = {}, ...children) {
   return e;
 }
 
-function toast(msg, type = 'info') {
-  const t = el('div', { class: `toast ${type}`, text: msg });
+/** Aviso rápido. action = [rótulo, função] mostra um botão (ex.: Desfazer). Erros ficam mais tempo e têm fechar. */
+function toast(msg, type = 'info', action = null) {
+  const t = el('div', { class: `toast ${type}`, role: type === 'error' ? 'alert' : 'status' }, el('span', { text: msg }));
+  if (action) t.append(el('button', { class: 'toast-act', onclick: () => { t.remove(); action[1](); } }, action[0]));
+  t.append(el('button', { class: 'toast-x', 'aria-label': 'Fechar aviso', onclick: () => t.remove() }, '×'));
   $('#toasts').append(t);
-  setTimeout(() => t.remove(), type === 'error' ? 9000 : 4500);
+  setTimeout(() => t.remove(), type === 'error' ? 12000 : action ? 8000 : 4500);
 }
 
 /* ======================================================================
@@ -103,7 +106,7 @@ function parseWall(str) {
 const logQueue = [];
 function log(source, kind, title, { media_id = null, status = 'ok', detail = null } = {}) {
   logQueue.push({ at: stationNow().str, source, kind, title: String(title).slice(0, 250), media_id, status, detail });
-  if (status === 'error') toast(`${title}: ${detail}`, 'error');
+  if (status === 'error') toast(`“${title}” — ${detail}. A programação seguiu normalmente; o problema ficou no Registro.`, 'error');
 }
 async function flushLog() {
   if (!logQueue.length) return;
@@ -197,9 +200,13 @@ class Player {
     return idx.length ? Math.max(...idx) + 1 : this.items.length;
   }
 
+  /** Remove a seleção e oferece Desfazer. */
   removeSelected() {
     if (!this.sel.size) return;
+    const before = this.items.slice();
+    const removed = this.sel.size;
     this.mutate(() => { this.items = this.items.filter((i) => !this.sel.has(i)); });
+    toast(`${removed} item(ns) removido(s) da lista.`, 'info', ['Desfazer', () => this.mutate(() => { this.items = before; })]);
   }
 
   moveTo(itemsToMove, at) {
@@ -468,6 +475,8 @@ class Player {
       const finish = () => { if (!triggered) { triggered = true; resolve(); } };
       const cleanup = () => { unsub(); deck.stop(); this.decks.delete(deck); };
       const media = part.item?.media_id || null;
+      // Resposta imediata (< 400 ms) enquanto o arquivo carrega.
+      if (!this.decks.size || this.decks.size === 1) { this.setDisplay(`Carregando: ${part.title}`, 0); this.changed(false); }
 
       (async () => {
         try {
@@ -720,7 +729,11 @@ class Scheduler {
     if (!rows.length) ul.append(el('li', { class: 'empty', text: this.enabled ? 'Nenhum evento nos próximos 15 minutos.' : 'Eventos desativados.' }));
     if (!isLeader) ul.prepend(el('li', { class: 'warn', text: 'Estúdio secundário: os eventos são disparados no estúdio principal.' }));
     $('#evToggle').classList.toggle('on', this.enabled);
-    $('#evToggle').textContent = this.enabled ? 'Ativos' : 'Inativos';
+    $('#evToggle').setAttribute('aria-checked', String(this.enabled));
+    $('#evToggle').textContent = this.enabled ? 'Ligados' : 'Desligados';
+    // Botões de pendentes só aparecem quando há algo esperando.
+    $('#evPlay').hidden = !this.pending.length;
+    $('#evDiscard').hidden = !this.pending.length;
   }
 }
 
@@ -871,6 +884,12 @@ class ListView {
     if (p === main) {
       $('#listname').textContent = `${p.meta.kind === 'rotation' ? 'Rotação: ' : p.meta.kind === 'sequence' ? 'Sequência: ' : ''}${p.meta.name}`;
       $('#dirty').hidden = !p.dirty;
+      // Ações da seleção aparecem perto da lista, só quando há algo selecionado.
+      const n = p.sel.size;
+      $('#selbar').hidden = n === 0;
+      $('#selcount').textContent = `${n} selecionado${n > 1 ? 's' : ''}`;
+      $('[data-sel="next"]').hidden = n !== 1;
+      $('[data-sel="paste"]').hidden = !clipboard.length;
       persistMainList();
     } else {
       p.panel?.persist();
@@ -959,7 +978,7 @@ class ListView {
 let activeView = null;
 
 let clipboard = [];
-function copySel(p) { clipboard = p.items.filter((it) => p.sel.has(it)).map(clone); toast(`${clipboard.length} item(ns) copiado(s).`); }
+function copySel(p) { clipboard = p.items.filter((it) => p.sel.has(it)).map(clone); toast(`${clipboard.length} item(ns) copiado(s). Use "Colar abaixo" ou Ctrl+V.`); p.changed(false); }
 function pasteInto(p) { if (clipboard.length) p.insert(clipboard); }
 
 async function updateLengths(p) {
@@ -993,7 +1012,8 @@ const library = {
     ul.replaceChildren();
     if (!r.ok) return;
     for (const it of r.items) {
-      const li = el('li', { draggable: 'true', title: it.filename }, el('span', { text: titleOf(it) }), el('small', { text: fmt(it.duration_ms) }));
+      const li = el('li', { draggable: 'true', title: it.demo ? `${it.filename} (demonstração)` : it.filename, class: it.demo ? 'demo' : '' },
+        el('span', { text: titleOf(it) }), it.demo ? el('i', { class: 'demo-tag', text: 'demo' }) : null, el('small', { text: fmt(it.duration_ms) }));
       li.addEventListener('dragstart', (e) => { drag = { items: [it] }; e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/plain', 'ondaria'); });
       li.addEventListener('dragend', () => { drag = null; });
       li.addEventListener('dblclick', () => (activeView?.p || main).insert([it]));
@@ -1005,16 +1025,31 @@ const library = {
   folders() {
     const sel = $('#libfolder');
     const keep = sel.value;
-    const kids = {};
-    for (const f of S.folders) (kids[f.parent_id || 0] ||= []).push(f);
-    const opts = [new Option('Todas as pastas', '0')];
-    const walk = (parent, depth) => {
-      for (const f of kids[parent] || []) {
-        opts.push(new Option(`${'  '.repeat(depth)}${f.name}`, f.id));
-        walk(f.id, depth + 1);
-      }
+    // Pastas da rádio primeiro; depois as da demonstração, compartilhadas por todas as rádios.
+    const build = (list) => {
+      const kids = {};
+      for (const f of list) (kids[f.parent_id || 0] ||= []).push(f);
+      const out = [];
+      const walk = (parent, depth) => {
+        for (const f of kids[parent] || []) {
+          out.push(new Option(`${'  '.repeat(depth)}${f.name}`, f.id));
+          walk(f.id, depth + 1);
+        }
+      };
+      walk(0, 0);
+      return out;
     };
-    walk(0, 0);
+    const own = S.folders.filter((f) => !f.shared);
+    const shared = S.folders.filter((f) => f.shared);
+    const opts = [new Option('Todas as pastas', '0')];
+    const g1 = el('optgroup', { label: 'Da sua rádio' });
+    g1.append(...build(own));
+    opts.push(g1);
+    if (shared.length) {
+      const g2 = el('optgroup', { label: 'Demonstração (todas as rádios)' });
+      g2.append(...build(shared));
+      opts.push(g2);
+    }
     sel.replaceChildren(...opts);
     sel.value = keep || store.get('libfolder', '0');
   },
@@ -1050,9 +1085,22 @@ function contextMenu(x, y, entries) {
   m.style.left = `${Math.min(x, innerWidth - 220)}px`;
   m.style.top = `${Math.min(y, innerHeight - m.offsetHeight - 10)}px`;
 }
+/* Menus suspensos: um aberto por vez; fecham ao escolher, ao clicar fora ou com Esc. */
+function closeMenus(except = null) {
+  $$('.dropmenu').forEach((m) => { if (m !== except) { m.hidden = true; $(`[data-menu="${m.id}"]`)?.setAttribute('aria-expanded', 'false'); } });
+}
 document.addEventListener('click', (e) => {
   if (!e.target.closest('#ctxmenu')) $('#ctxmenu').hidden = true;
-  if (!e.target.closest('.dropdown')) $('#insertmenu').hidden = true;
+  const opener = e.target.closest('[data-menu]');
+  if (opener) {
+    const m = document.getElementById(opener.dataset.menu);
+    closeMenus(m);
+    m.hidden = !m.hidden;
+    opener.setAttribute('aria-expanded', String(!m.hidden));
+    return;
+  }
+  // Escolher um item fecha o menu (exceto as chaves liga/desliga, que mostram o novo estado).
+  if (!e.target.closest('.dropdown') || (e.target.closest('.dropmenu button, .dropmenu a') && !e.target.closest('[data-toggle]'))) closeMenus();
 });
 
 function showPostit(text) {
@@ -1105,12 +1153,19 @@ async function applyDevices() {
   for (const [n, a] of auxPanels) await a.engine?.setOutput(devices.aux[n - 1]);
 }
 
-function setSatButton(on) { $('[data-toggle="satellite"]')?.classList.toggle('on', on); }
+function setSatButton(on) {
+  const b = $('[data-toggle="satellite"]');
+  if (!b) return;
+  b.classList.toggle('on', on);
+  b.setAttribute('aria-checked', String(on));
+  b.textContent = on ? 'Fechar a entrada do satélite (aberta)' : 'Abrir a entrada do satélite';
+}
 
 let talkOn = false;
 async function talkOver() {
   talkOn = !talkOn;
   $('#btnTalk').classList.toggle('on', talkOn);
+  $('#btnTalk').setAttribute('aria-pressed', String(talkOn));
   engine.setDuck('talk', talkOn ? S.settings.talkover_level : null, S.settings.talkover_ms);
   if (talkOn) {
     if (await engine.openInput('mic', devices.mic)) engine.setInputOpen('mic', true, S.settings.talkover_ms);
@@ -1200,14 +1255,20 @@ async function save(player = main, asNew = false) {
     name = r.name;
     kind = r.kind;
   }
+  const btn = player === main ? $('#btnSave') : null;
+  btn?.setAttribute('aria-busy', 'true');
+  if (btn) btn.textContent = 'Salvando…';
   const res = await api('/api/playlists', { method: 'POST', body: { id, name, kind, items: player.items } });
-  if (!res.ok) { toast(res.error || 'Erro ao salvar.', 'error'); return; }
+  btn?.removeAttribute('aria-busy');
+  if (btn) btn.textContent = 'Salvar';
+  if (!res.ok) { toast(`A lista não foi salva: ${res.error || 'sem resposta do servidor'}. Suas alterações continuam aqui; tente de novo.`, 'error', ['Tentar de novo', () => save(player, asNew)]); return; }
   S.playlists = res.playlists;
   player.meta = { id: res.id, name, kind };
   player.dirty = false;
   player.changed(false);
   if (player === main) api('/api/state', { method: 'POST', body: { last_playlist_id: res.id } });
-  toast('Lista salva.');
+  const t = stationNow();
+  toast(`“${name}” salva às ${pad(t.h)}:${pad(t.mi)}. Já pode ser usada em eventos e por outros computadores.`, 'ok');
 }
 
 /* ======================================================================
@@ -1225,7 +1286,7 @@ async function insertCommand(type, player = main) {
       break;
     }
     case 'random': {
-      const r = await ask('Faixa aleatória', [field('Pasta (inclui subpastas)', select('f', S.folders.filter((f) => f.kind === 'normal').map((f) => [f.id, f.name])))]);
+      const r = await ask('Faixa aleatória', [field('Pasta (inclui subpastas)', select('f', S.folders.filter((f) => f.kind === 'normal').map((f) => [f.id, f.shared ? `Demonstração › ${f.name}` : f.name])))]);
       if (r) item = { type, folder_id: +r.f, title: `Aleatória: ${S.folders.find((f) => f.id == r.f)?.name}` };
       break;
     }
@@ -1288,7 +1349,10 @@ function updateOnAir() {
   $('#nexttitle').textContent = scheduler.pending.length ? `⏰ ${scheduler.pending[0].ev.name}` : nx ? titleOf(nx) : '—';
   document.body.classList.toggle('onair', main.state === 'playing');
   $('#btnPause').classList.toggle('on', main.state === 'paused');
+  $('#btnPause').setAttribute('aria-pressed', String(main.state === 'paused'));
   $('#btnStopAfter').classList.toggle('on', main.stopAfter);
+  $('#btnStopAfter').setAttribute('aria-pressed', String(main.stopAfter));
+  $('#btnPlay').classList.toggle('playing', main.state === 'playing');
 }
 
 function updateMeters() {
@@ -1382,37 +1446,52 @@ function bindUi() {
   $('#jpage').addEventListener('change', (e) => { jingles.page = +e.target.value; store.set('jpage', jingles.page); jingles.render(); });
   $('#evPlay').addEventListener('click', () => scheduler.playPending());
   $('#evDiscard').addEventListener('click', () => {
+    if (!confirm(`Descartar ${scheduler.pending.length} evento(s) que estão esperando? Eles não vão tocar desta vez.`)) return;
     for (const p of scheduler.pending) log('evento', 'evento', p.ev.name, { status: 'error', detail: 'Descartado pelo operador' });
     scheduler.pending = [];
     scheduler.render(true);
   });
-  $('#evToggle').addEventListener('click', () => { scheduler.enabled = !scheduler.enabled; scheduler.render(true); });
+  $('#evToggle').addEventListener('click', () => {
+    if (scheduler.enabled && !confirm('Desligar os eventos? Nada agendado vai tocar até você ligar de novo.')) return;
+    scheduler.enabled = !scheduler.enabled;
+    scheduler.render(true);
+    toast(scheduler.enabled ? 'Eventos ligados.' : 'Eventos desligados neste estúdio.', scheduler.enabled ? 'ok' : 'warn');
+  });
   $('#leader').addEventListener('click', () => { if (!isLeader) heartbeat(true); });
 
   $$('[data-toggle]').forEach((b) => b.addEventListener('click', () => {
     const k = b.dataset.toggle;
     if (k === 'sweepers') main.sweepersOn = !main.sweepersOn; else main[k] = !main[k];
-    b.classList.toggle('on', k === 'sweepers' ? main.sweepersOn : main[k]);
+    const on = k === 'sweepers' ? main.sweepersOn : main[k];
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-checked', String(on));
     if (k === 'loop') main.computeNext();
+    // Estados fora do padrão ficam visíveis no próprio botão "Reprodução".
+    const badges = [main.loop && 'loop', main.autodelete && 'tirando', !main.sweepersOn && 'sem sweepers'].filter(Boolean);
+    $('#playbadges').textContent = badges.length ? `(${badges.join(', ')})` : '';
+    toast({ sweepers: on ? 'Sweepers ligados.' : 'Sweepers desligados: nada toca por cima das músicas.', loop: on ? 'Loop ligado: a faixa atual vai repetir.' : 'Loop desligado.', autodelete: on ? 'Cada faixa sai da lista depois de tocar.' : 'As faixas ficam na lista depois de tocar.' }[k]);
     main.changed(false);
   }));
 
   const actions = {
-    new: () => { if (main.dirty && main.items.length && !confirm('Descartar as alterações da lista atual?')) return; main.loadList({ items: [], name: 'Sem título' }); },
+    new: () => { if (main.dirty && main.items.length && !confirm('A lista atual tem alterações não salvas. Começar uma lista vazia mesmo assim?')) return; main.loadList({ items: [], name: 'Sem título' }); },
     open: () => openDialog(main),
     save: () => save(main),
     saveas: () => save(main, true),
-    remove: () => (activeView?.p || main).removeSelected(),
-    copy: () => copySel(activeView?.p || main),
-    paste: () => pasteInto(activeView?.p || main),
-    find: () => { const f = $('#findbox'); f.hidden = !f.hidden; if (!f.hidden) f.focus(); else { listView.filter = ''; listView.paint(); } },
-    insertmenu: () => { $('#insertmenu').hidden = !$('#insertmenu').hidden; },
-    shuffle: () => main.shuffle(),
-    sellength: () => toast(`Seleção: ${fmt([...main.sel].reduce((a, it) => a + itemMs(it), 0))}`),
-    updlength: () => updateLengths(main),
+    find: () => { const f = $('#findwrap'); f.hidden = !f.hidden; if (!f.hidden) $('#findbox').focus(); else { $('#findbox').value = ''; listView.filter = ''; listView.paint(); } },
+    shuffle: () => { const before = main.items.slice(); main.shuffle(); toast('Lista embaralhada.', 'info', ['Desfazer', () => main.mutate(() => { main.items = before; })]); },
+    updlength: () => { if (!main.sel.size) { toast('Selecione as faixas primeiro.'); return; } updateLengths(main).then(() => toast('Durações atualizadas.', 'ok')); },
   };
   $$('[data-act]').forEach((b) => b.addEventListener('click', () => actions[b.dataset.act]?.()));
-  $$('[data-insert]').forEach((b) => b.addEventListener('click', () => { $('#insertmenu').hidden = true; insertCommand(b.dataset.insert, activeView?.p || main); }));
+  $$('[data-insert]').forEach((b) => b.addEventListener('click', () => insertCommand(b.dataset.insert, activeView?.p || main)));
+  $('#dirty').addEventListener('click', () => save(main));
+  const selActions = {
+    next: () => { const i = main.items.indexOf([...main.sel][0]); if (i >= 0) { main.markNext(i); toast('Marcada como próxima (verde).'); } },
+    copy: () => copySel(main),
+    paste: () => pasteInto(main),
+    remove: () => main.removeSelected(),
+  };
+  $$('[data-sel]').forEach((b) => b.addEventListener('click', () => selActions[b.dataset.sel]()));
   $('#findbox').addEventListener('input', (e) => {
     listView.filter = e.target.value;
     listView.paint();
@@ -1424,10 +1503,13 @@ function bindUi() {
   $('#libfolder').addEventListener('change', (e) => { store.set('libfolder', e.target.value); library.load(); });
 
   const auxBox = $('#auxbtns');
-  for (let n = 1; n <= Math.min(4, S.station.max_aux_players); n++) {
-    auxBox.append(el('button', { 'data-aux': n, title: `Player auxiliar ${n} (Alt+${n})`, onclick: () => toggleAux(n) }, `Aux ${n}`));
+  const maxAux = Math.min(4, S.station.max_aux_players);
+  for (let n = 1; n <= maxAux; n++) {
+    auxBox.append(el('button', { 'data-aux': n, onclick: () => toggleAux(n) }, `Player extra ${n} `, el('kbd', { text: `Alt ${n}` })));
   }
-  auxBox.append(el('button', { 'data-toggle': 'satellite', title: 'Abrir/fechar a entrada do satélite' }, 'Satélite'));
+  if (!maxAux) auxBox.append(el('p', { class: 'menu-note', text: 'Seu plano não tem players extras.' }));
+  auxBox.append(el('hr'));
+  auxBox.append(el('button', { 'data-toggle': 'satellite', role: 'menuitemcheckbox', 'aria-checked': 'false' }, 'Abrir a entrada do satélite'));
   $('[data-toggle="satellite"]').addEventListener('click', (e) => {
     const b = e.currentTarget;
     const on = !b.classList.contains('on');
@@ -1449,7 +1531,7 @@ function bindUi() {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (/^[1-9]$/.test(e.key)) { e.preventDefault(); jingles.press(+e.key - 1); return; }
     if (e.key === 'Delete') (activeView?.p || main).removeSelected();
-    if (e.key === 'Escape') { $('#ctxmenu').hidden = true; $('#insertmenu').hidden = true; }
+    if (e.key === 'Escape') { $('#ctxmenu').hidden = true; closeMenus(); }
   });
 
   window.addEventListener('beforeunload', (e) => {

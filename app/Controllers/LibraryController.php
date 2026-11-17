@@ -5,35 +5,45 @@ namespace App\Controllers;
 
 use App\Core\Auth;
 use App\Core\DB;
+use App\Services\DemoLibrary;
 use App\Services\Media;
 use App\Services\Stations;
 
 final class LibraryController
 {
-    public const KINDS = ['normal' => 'Comum', 'time' => 'Hora certa (HRSxx, HRSxx_O, MINxx)', 'temperature' => 'Temperatura (TMPxxx, TMPNxxx)', 'humidity' => 'Umidade (HUMxxx)'];
+    public const KINDS = ['normal' => 'Comum', 'time' => 'Hora certa (HHMM, ou HRSxx + MINxx)', 'temperature' => 'Temperatura (TMPxxx, TMPNxxx)', 'humidity' => 'Umidade (HUMxxx)'];
 
     public function index(): string
     {
         $sid = Auth::stationId();
-        $folders = DB::all('SELECT f.*, (SELECT COUNT(*) FROM media m WHERE m.folder_id = f.id) AS files FROM folders f WHERE f.station_id = ? ORDER BY f.name', [$sid]);
+        DemoLibrary::sync(); // lê novos áudios colocados na pasta audios/ do servidor
+        $demo = DemoLibrary::id();
+        $count = '(SELECT COUNT(*) FROM media m WHERE m.folder_id = f.id) AS files';
+        $folders = DB::all("SELECT f.*, $count FROM folders f WHERE f.station_id = ? ORDER BY f.name", [$sid]);
+        $demoFolders = $demo && $demo !== $sid ? DB::all("SELECT f.*, $count FROM folders f WHERE f.station_id = ? ORDER BY f.name", [$demo]) : [];
         $current = (int) input('pasta', 0) ?: (int) ($folders[0]['id'] ?? 0);
         $folder = null;
-        foreach ($folders as $f) {
+        foreach ([...$folders, ...$demoFolders] as $f) {
             if ((int) $f['id'] === $current) {
                 $folder = $f;
             }
         }
-        $media = $folder ? DB::all('SELECT * FROM media WHERE station_id = ? AND folder_id = ? ORDER BY filename', [$sid, $current]) : [];
+        // Somente leitura quando a pasta é da demonstração (compartilhada com todas as rádios).
+        $readonly = $folder && (int) $folder['station_id'] !== $sid;
+        $media = $folder ? DB::all('SELECT * FROM media WHERE station_id = ? AND folder_id = ? ORDER BY filename', [(int) $folder['station_id'], $current]) : [];
         $st = station();
         return view('library/index', [
             'title' => 'Biblioteca',
             'folders' => $folders,
+            'demoFolders' => $demoFolders,
+            'readonly' => $readonly,
             'folder' => $folder,
             'media' => $media,
             'used' => Stations::usedBytes($sid),
             'quota' => (int) $st['storage_mb'] * 1024 * 1024,
             'extensions' => Media::allowedExtensions(),
             'kinds' => self::KINDS,
+            'sent' => max(0, (int) input('enviados', 0)),
         ]);
     }
 
@@ -82,7 +92,8 @@ final class LibraryController
             Media::delete($m);
         }
         DB::run('DELETE FROM folders WHERE id = ? AND station_id = ?', [$id, $sid]);
-        flash('success', 'Pasta e arquivos excluídos.');
+        \App\Core\Audit::record('folder.delete', 'folder:' . $id, count($ids) . ' pasta(s)');
+        flash('success', 'Pasta, subpastas e arquivos excluídos.');
         redirect('/biblioteca');
     }
 
@@ -122,7 +133,8 @@ final class LibraryController
                 $count++;
             }
         }
-        flash('success', $count . ' arquivo(s) excluído(s).');
+        \App\Core\Audit::record('media.delete', null, $count . ' arquivo(s)');
+        flash('success', $count . ' arquivo(s) excluído(s). Onde eles estavam em listas, o estúdio vai pular o item.');
         back();
     }
 }

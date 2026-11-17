@@ -32,7 +32,7 @@ final class Session
             session_regenerate_id(true);
             $_SESSION['_rotated'] = $now;
         }
-        foreach (['_flash', '_old'] as $k) {
+        foreach (['_flash', '_old', '_errors'] as $k) {
             $_SESSION[$k] = $_SESSION[$k . '_next'] ?? [];
             unset($_SESSION[$k . '_next']);
         }

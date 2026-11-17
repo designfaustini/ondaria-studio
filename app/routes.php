@@ -1,7 +1,9 @@
 <?php
 declare(strict_types=1);
 
+use App\Controllers\AccountController;
 use App\Controllers\AdminController;
+use App\Controllers\LegalController;
 use App\Controllers\ApiController;
 use App\Controllers\AuthController;
 use App\Controllers\EventsController;
@@ -13,6 +15,13 @@ use App\Controllers\StudioController;
 /** @var App\Core\Router $router */
 
 $router->get('/', [PublicController::class, 'home']);
+$router->get('/termos', [LegalController::class, 'terms']);
+$router->get('/privacidade', [LegalController::class, 'privacy']);
+$router->get('/direitos-autorais', [LegalController::class, 'copyright']);
+$router->get('/contato', [LegalController::class, 'contact']);
+// Novo aceite: só exige login (sem a checagem de termos, senão entraria em laço).
+$router->get('/aceitar-termos', [LegalController::class, 'acceptForm'], ['login']);
+$router->post('/aceitar-termos', [LegalController::class, 'accept'], ['login']);
 $router->get('/np/{slug:[a-z0-9-]+}.{fmt:json|txt}', [PublicController::class, 'nowPlaying']);
 
 $router->group('', ['guest'], static function ($r): void {
@@ -60,8 +69,7 @@ $router->group('', ['auth', 'station'], static function ($r): void {
     $r->get('/usuarios', [ManageController::class, 'users'], ['manager']);
     $r->post('/usuarios', [ManageController::class, 'saveUser'], ['manager']);
     $r->post('/usuarios/{id}/excluir', [ManageController::class, 'deleteUser'], ['manager']);
-    $r->get('/conta', [ManageController::class, 'account']);
-    $r->post('/conta', [ManageController::class, 'saveAccount']);
+    $r->get('/auditoria', [ManageController::class, 'audit'], ['manager']);
 
     $r->get('/api/bootstrap', [ApiController::class, 'bootstrap']);
     $r->get('/api/library', [ApiController::class, 'library']);
@@ -80,6 +88,16 @@ $router->group('', ['auth', 'station'], static function ($r): void {
     $r->post('/api/heartbeat', [ApiController::class, 'heartbeat']);
     $r->post('/api/media/{id}/duration', [ApiController::class, 'mediaDuration']);
     $r->post('/api/state', [ApiController::class, 'saveState']);
+});
+
+// Minha conta e direitos do titular (LGPD art. 18): vale também para o superadmin, que não tem rádio.
+$router->group('/conta', ['auth'], static function ($r): void {
+    $r->get('', [AccountController::class, 'index']);
+    $r->post('/perfil', [AccountController::class, 'profile']);
+    $r->post('/senha', [AccountController::class, 'password']);
+    $r->get('/exportar', [AccountController::class, 'export']);
+    $r->post('/excluir', [AccountController::class, 'delete']);
+    $r->post('/encerramento/cancelar', [AccountController::class, 'cancelClosing']);
 });
 
 $router->group('/admin', ['auth', 'super'], static function ($r): void {

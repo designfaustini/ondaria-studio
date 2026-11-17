@@ -9,17 +9,28 @@ final class Auth
     private static ?array $station = null;
     private static bool $loaded = false;
 
+    /** Impressão da senha atual: se a senha mudar, as sessões abertas antes deixam de valer (achado F5). */
+    private static function pwv(string $hash): string
+    {
+        return substr(hash('sha256', $hash), 0, 32);
+    }
+
     public static function user(): ?array
     {
         if (!self::$loaded) {
             self::$loaded = true;
             $id = Session::get('uid');
             if (is_int($id)) {
-                self::$user = DB::one('SELECT id, station_id, name, email, role, active FROM users WHERE id = ?', [$id]);
-                if (!self::$user || !(int) self::$user['active']) {
-                    self::$user = null;
+                $u = DB::one('SELECT id, station_id, name, email, role, active, password_hash, terms_version, terms_accepted_at FROM users WHERE id = ?', [$id]);
+                if (!$u || !(int) $u['active'] || !hash_equals(self::pwv((string) $u['password_hash']), (string) Session::get('pwv', ''))) {
                     Session::forget('uid');
+                    Session::forget('pwv');
+                    $u = null;
                 }
+                if ($u) {
+                    unset($u['password_hash']);
+                }
+                self::$user = $u;
             }
         }
         return self::$user;
@@ -50,12 +61,14 @@ final class Auth
         // Mesmo custo de tempo quando o e-mail não existe, para não revelar contas.
         $hash = $u['password_hash'] ?? password_hash(random_bytes(8), PASSWORD_DEFAULT);
         if (!password_verify($password, $hash) || !$u || !(int) $u['active']) {
+            Audit::access('login_falhou', $u ? (int) $u['id'] : null, $email);
             return false;
         }
         if (password_needs_rehash($hash, PASSWORD_DEFAULT)) {
             DB::update('users', ['password_hash' => password_hash($password, PASSWORD_DEFAULT)], 'id = ?', [$u['id']]);
         }
         self::login((int) $u['id']);
+        Audit::access('login', (int) $u['id']);
         return true;
     }
 
@@ -63,6 +76,7 @@ final class Auth
     {
         Session::regenerate();
         Session::set('uid', $userId);
+        Session::set('pwv', self::pwv((string) DB::value('SELECT password_hash FROM users WHERE id = ?', [$userId])));
         DB::update('users', ['last_login_at' => now()], 'id = ?', [$userId]);
         self::$loaded = false;
         self::$station = null;
@@ -70,6 +84,9 @@ final class Auth
 
     public static function logout(): void
     {
+        if ($u = self::user()) {
+            Audit::access('logout', (int) $u['id']);
+        }
         Session::destroy();
         self::$user = null;
         self::$station = null;

@@ -17,7 +17,8 @@ final class StudioController
 
     public function media(int $id): void
     {
-        $m = DB::one('SELECT * FROM media WHERE id = ? AND station_id = ?', [$id, Auth::stationId()]);
+        // A rádio lê os próprios arquivos e os de demonstração; nunca os de outra rádio.
+        $m = Media::readable(Auth::stationId(), $id);
         Session::release();
         if (!$m) {
             abort(404);

@@ -82,7 +82,11 @@ final class Id3
     {
         $s = @mb_convert_encoding($s, 'UTF-8', $charset) ?: '';
         $s = trim(str_replace("\0", '', $s));
-        $s = preg_replace('/[\x00-\x1F\x7F]/u', '', $s) ?? '';
-        return $s === '' ? null : mb_substr($s, 0, 250);
+        // Tag corrompida ou com codificação errada (caracteres de controle, U+FFFD, uso privado):
+        // descarta, e o título passa a vir do nome do arquivo.
+        if ($s === '' || preg_match('/[\x{0080}-\x{009F}\x{FFFD}\x{E000}-\x{F8FF}]|[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', $s) || !mb_check_encoding($s, 'UTF-8')) {
+            return null;
+        }
+        return mb_substr($s, 0, 250);
     }
 }

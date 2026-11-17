@@ -1,3 +1,7 @@
 .env
 /storage/*
 !/storage/.htaccess
+# Áudios de demonstração: ficam só no servidor (podem ser obras de terceiros; o repositório é público)
+/audios/*
+!/audios/.htaccess
+!/audios/README.md

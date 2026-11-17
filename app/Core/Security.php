@@ -11,7 +11,7 @@ final class Security
         header('X-Content-Type-Options: nosniff');
         header('X-Frame-Options: DENY');
         header('Referrer-Policy: same-origin');
-        header('Permissions-Policy: camera=(), geolocation=(), microphone=(self), speaker-selection=(self)');
+        header('Permissions-Policy: camera=(), geolocation=(self), microphone=(self), speaker-selection=(self)');
         // Rádios online (media-src) e servidores de transmissão (connect-src wss:) ficam em outros domínios.
         header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
             . "media-src 'self' blob: https: http:; connect-src 'self' https: wss: ws:; worker-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'");

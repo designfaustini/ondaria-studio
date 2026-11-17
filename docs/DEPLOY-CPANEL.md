@@ -45,6 +45,8 @@ php bin/console.php migrate
 php bin/console.php superadmin seu-email@dominio.com.br "Seu Nome"
 ```
 
+O `migrate` também registra os áudios de demonstração da pasta `audios/`, compartilhados por todas as rádios. Envie essa pasta junto com o projeto: ela fica fora de `public/` e já vem com `.htaccess` bloqueando o acesso direto.
+
 O segundo comando pede a senha do administrador da plataforma. Sem Terminal: importe `database/schema.sql` pelo **phpMyAdmin** e use o Terminal depois só para o superadmin (ou peça ao suporte da hospedagem).
 
 Se o comando `php` do terminal for de outra versão, use o caminho completo, ex.: `/opt/cpanel/ea-php85/root/usr/bin/php`.

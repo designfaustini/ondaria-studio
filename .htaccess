@@ -3,6 +3,6 @@
 # e encaminha todas as requisições para public/.
 Options -Indexes
 RewriteEngine On
-RewriteRule ^(app|bin|database|storage|views|docs|tests)(/|$) - [F,L]
+RewriteRule ^(app|bin|database|storage|views|docs|tests|audios)(/|$) - [F,L]
 RewriteRule ^\.env - [F,L]
 RewriteRule ^(?!public/)(.*)$ public/$1 [L]

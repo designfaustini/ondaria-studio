@@ -34,8 +34,9 @@ final class EventsController
             abort(404);
         }
         $event ??= [
-            'id' => 0, 'name' => '', 'enabled' => 1, 'start_at' => date('Y-m-d H:00:00', time() + 3600), 'expires_at' => null,
-            'periodicity' => 'daily', 'hours_mask' => 0, 'weekdays_mask' => 127, 'item' => '{"type":"time"}',
+            // Padrão = o evento mais comum: hora certa de hora em hora, esperando a música acabar.
+            'id' => 0, 'name' => '', 'enabled' => 1, 'start_at' => date('Y-m-d') . ' 00:00:00', 'expires_at' => null,
+            'periodicity' => 'hourly', 'hours_mask' => 0, 'weekdays_mask' => 127, 'item' => '{"type":"time"}',
             'wait_mode' => 'delayed', 'priority' => 'low', 'max_wait_s' => 300, 'event_set_id' => (int) input('grade', station()['active_event_set_id']),
         ];
         $event['item'] = json_decode((string) $event['item'], true) ?: ['type' => 'time'];
@@ -43,8 +44,9 @@ final class EventsController
             'title' => $id ? 'Editar evento' : 'Novo evento',
             'event' => $event,
             'sets' => DB::all('SELECT id, name FROM event_sets WHERE station_id = ? ORDER BY name', [$sid]),
-            'folders' => DB::all('SELECT id, name, kind FROM folders WHERE station_id = ? ORDER BY name', [$sid]),
-            'media' => DB::all('SELECT m.id, m.filename, m.title, m.artist, f.name AS folder FROM media m JOIN folders f ON f.id = m.folder_id WHERE m.station_id = ? ORDER BY f.name, m.filename LIMIT 5000', [$sid]),
+            'folders' => array_map(static fn ($f) => [...$f, 'name' => (int) $f['station_id'] === $sid ? $f['name'] : 'Demonstração › ' . $f['name']],
+                DB::all('SELECT id, name, kind, station_id FROM folders WHERE station_id IN (?, ?) ORDER BY CASE WHEN station_id = ? THEN 0 ELSE 1 END, name', [$sid, \App\Services\DemoLibrary::id(), $sid])),
+            'media' => \App\Services\Media::pickerList($sid),
             'playlists' => DB::all('SELECT id, name, kind FROM playlists WHERE station_id = ? ORDER BY kind, name', [$sid]),
             'types' => Items::TYPES,
         ]);
@@ -75,10 +77,11 @@ final class EventsController
         ], $sid);
         $start = $this->dt((string) input('start_date'), (string) input('start_time'));
         $errors = [];
-        if (!$item) $errors[] = 'Escolha o que o evento vai executar (arquivo, pasta, lista ou endereço válido).';
-        if (!$start) $errors[] = 'Data e hora de início inválidas.';
+        if (!$item) $errors[] = 'Não deu para salvar: escolha o que o evento vai tocar (um arquivo, pasta, lista ou endereço que exista).';
+        if (!$start) $errors[] = 'Não deu para salvar: a data ou o horário de início está incompleto.';
         $expires = input('expires') ? $this->dt((string) input('expires_date'), (string) input('expires_time')) : null;
-        if (input('expires') && !$expires) $errors[] = 'Data de expiração inválida.';
+        if (input('expires') && !$expires) $errors[] = 'Não deu para salvar: a data de término está incompleta.';
+        if ($start && $expires && $expires <= $start) $errors[] = 'Não deu para salvar: a data de término precisa ser depois do início.';
         $hours = 0;
         foreach ((array) ($_POST['hours'] ?? []) as $h) {
             $hours |= 1 << max(0, min(23, (int) $h));
@@ -114,7 +117,7 @@ final class EventsController
         } else {
             DB::insert('events', [...$data, 'station_id' => $sid]);
         }
-        flash('success', 'Evento salvo. Estúdios abertos recebem a mudança em até 1 minuto.');
+        flash('success', "Evento “{$data['name']}” salvo. O estúdio aberto passa a usá-lo em até 1 minuto, sem precisar recarregar.");
         redirect('/eventos?grade=' . $set);
     }
 
@@ -148,7 +151,16 @@ final class EventsController
             'copy' => $this->copy($sid, $ids, (int) input('target_set', 0)),
             default => abort(400),
         };
-        flash('success', 'Pronto.');
+        $n = count($ids);
+        if ($action === 'delete') {
+            \App\Core\Audit::record('events.delete', 'set:' . $set, "$n evento(s)");
+        }
+        flash('success', match ($action) {
+            'delete' => "$n evento(s) excluído(s).",
+            'enable' => "$n evento(s) ativado(s). Eles voltam a tocar no próximo horário.",
+            'disable' => "$n evento(s) desativado(s). Eles não tocam até você ativar de novo.",
+            default => "$n evento(s) copiado(s) para a outra grade.",
+        });
         redirect('/eventos?grade=' . $set);
     }
 
@@ -188,7 +200,8 @@ final class EventsController
         $sid = Auth::stationId();
         if (DB::value('SELECT 1 FROM event_sets WHERE id = ? AND station_id = ?', [$id, $sid])) {
             DB::update('stations', ['active_event_set_id' => $id], 'id = ?', [$sid]);
-            flash('success', 'Grade ativada. O estúdio passa a usá-la em até 1 minuto.');
+            \App\Core\Audit::record('eventset.activate', 'set:' . $id);
+            flash('success', 'Esta grade está no ar. O estúdio aberto passa a usá-la em até 1 minuto.');
         }
         redirect('/eventos?grade=' . $id);
     }
@@ -201,7 +214,8 @@ final class EventsController
             redirect('/eventos?grade=' . $id);
         }
         DB::run('DELETE FROM event_sets WHERE id = ? AND station_id = ?', [$id, $sid]);
-        flash('success', 'Grade excluída.');
+        \App\Core\Audit::record('eventset.delete', 'set:' . $id);
+        flash('success', 'Grade excluída, com os eventos dela.');
         redirect('/eventos');
     }
 }

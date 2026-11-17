@@ -94,10 +94,11 @@ function csrf_field(): string
     return '<input type="hidden" name="_csrf" value="' . e(Csrf::token()) . '">';
 }
 
-function flash(string $type, string $message): void
+/** Mensagem para a próxima tela; $next = ['href' => ..., 'label' => ...] mostra o próximo passo. */
+function flash(string $type, string $message, ?array $next = null): void
 {
     $f = Session::get('_flash_next', []);
-    $f[] = [$type, $message];
+    $f[] = [$type, $message, $next];
     Session::set('_flash_next', $f);
 }
 
@@ -116,6 +117,28 @@ function remember_input(array $input): void
 {
     unset($input['password'], $input['password_confirmation'], $input['_csrf']);
     Session::set('_old_next', $input);
+}
+
+/** Erros por campo para a próxima tela (mostrados ao lado do campo, mantendo o que foi digitado). */
+function field_errors(array $errors, array $input = []): void
+{
+    Session::set('_errors_next', $errors);
+    if ($input) {
+        remember_input($input);
+    }
+}
+
+function field_error(string $field): string
+{
+    $msg = Session::get('_errors', [])[$field] ?? null;
+    return $msg ? '<p class="field-error" id="' . e($field) . '-err" role="alert">' . e($msg) . '</p>' : '<p class="field-error" id="' . e($field) . '-err" hidden></p>';
+}
+
+/** Atributos de acessibilidade do campo com erro. */
+function field_attrs(string $field): string
+{
+    $has = isset(Session::get('_errors', [])[$field]);
+    return ' aria-describedby="' . e($field) . '-err"' . ($has ? ' aria-invalid="true"' : '');
 }
 
 function user(): ?array

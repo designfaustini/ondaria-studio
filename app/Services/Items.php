@@ -36,9 +36,12 @@ final class Items
         $items = array_slice(array_values(array_filter($items, 'is_array')), 0, $max);
         $mediaIds = array_unique(array_map('intval', array_column(array_filter($items, static fn ($i) => ($i['type'] ?? '') === 'track'), 'media_id')));
         $media = [];
+        // A rádio pode usar os próprios arquivos e os da demonstração.
+        $owners = DemoLibrary::readable($stationId);
+        $inOwners = implode(',', array_fill(0, count($owners), '?'));
         foreach (array_chunk($mediaIds, 500) as $chunk) {
             $in = implode(',', array_fill(0, count($chunk), '?'));
-            foreach (DB::all("SELECT * FROM media WHERE station_id = ? AND id IN ($in)", [$stationId, ...$chunk]) as $m) {
+            foreach (DB::all("SELECT * FROM media WHERE station_id IN ($inOwners) AND id IN ($in)", [...$owners, ...$chunk]) as $m) {
                 $media[(int) $m['id']] = $m;
             }
         }
@@ -60,8 +63,9 @@ final class Items
 
     private static function refs(int $sid): array
     {
+        $owners = DemoLibrary::readable($sid);
         return [
-            'folders' => array_column(DB::all('SELECT id, name FROM folders WHERE station_id = ?', [$sid]), 'name', 'id'),
+            'folders' => array_column(DB::all('SELECT id, name FROM folders WHERE station_id IN (' . implode(',', array_fill(0, count($owners), '?')) . ')', $owners), 'name', 'id'),
             'playlists' => array_column(DB::all('SELECT id, name FROM playlists WHERE station_id = ?', [$sid]), 'name', 'id'),
             'sets' => array_column(DB::all('SELECT id, name FROM event_sets WHERE station_id = ?', [$sid]), 'name', 'id'),
         ];

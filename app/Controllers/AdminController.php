@@ -16,7 +16,8 @@ final class AdminController
             (SELECT COUNT(*) FROM users u WHERE u.station_id = s.id) AS users,
             (SELECT u.email FROM users u WHERE u.station_id = s.id AND u.role = \'owner\' LIMIT 1) AS owner_email,
             st.np_updated_at
-            FROM stations s JOIN plans p ON p.id = s.plan_id LEFT JOIN station_state st ON st.station_id = s.id ORDER BY s.created_at DESC');
+            FROM stations s JOIN plans p ON p.id = s.plan_id LEFT JOIN station_state st ON st.station_id = s.id
+            WHERE s.slug <> ? ORDER BY s.created_at DESC', [\App\Services\DemoLibrary::SLUG]);
         return view('admin/index', ['title' => 'Plataforma', 'stations' => $stations, 'plans' => DB::all('SELECT * FROM plans ORDER BY price_cents')], 'app');
     }
 
@@ -28,16 +29,19 @@ final class AdminController
             abort(422);
         }
         DB::update('stations', ['plan_id' => $plan, 'status' => $status], 'id = ?', [$id]);
-        flash('success', 'Rádio atualizada.');
+        \App\Core\Audit::record('admin.station', 'station:' . $id, "plano $plan, $status", $id);
+        flash('success', 'Rádio atualizada: ' . ($status === 'active' ? 'ativa' : 'suspensa') . '.');
         redirect('/admin');
     }
 
     public function openStation(int $id): void
     {
-        if (!DB::value('SELECT 1 FROM stations WHERE id = ?', [$id])) {
+        if (!DB::value('SELECT 1 FROM stations WHERE id = ? AND slug <> ?', [$id, \App\Services\DemoLibrary::SLUG])) {
             abort(404);
         }
         Session::set('as_station', $id);
+        // Transparência: o acesso de suporte aparece na auditoria da própria rádio.
+        \App\Core\Audit::record('support.access', 'station:' . $id, null, $id);
         redirect('/estudio');
     }
 

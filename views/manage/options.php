@@ -1,70 +1,117 @@
 <?php
 $s = $settings;
-$chk = fn (string $k) => '<input type="checkbox" name="' . $k . '" value="1"' . ($s[$k] ? ' checked' : '') . '>';
-$num = fn (string $k, string $step = '1', string $min = '', string $max = '') => '<input type="number" name="' . $k . '" value="' . e($s[$k]) . '" step="' . $step . '"' . ($min !== '' ? ' min="' . $min . '"' : '') . ($max !== '' ? ' max="' . $max . '"' : '') . '>';
+$chk = fn (string $k, string $label, string $help = '') => '<label class="check"><input type="checkbox" name="' . $k . '" value="1"' . ($s[$k] ? ' checked' : '') . '> <span>' . e($label) . ($help !== '' ? '<small class="muted" style="display:block">' . e($help) . '</small>' : '') . '</span></label>';
+$num = fn (string $k, string $label, string $step, string $min, string $max, string $help = '') => '<div class="field"><label for="o-' . $k . '">' . e($label) . '</label><input id="o-' . $k . '" type="number" name="' . $k . '" value="' . e($s[$k]) . '" step="' . $step . '" min="' . $min . '" max="' . $max . '" inputmode="decimal" required>' . ($help !== '' ? '<small>' . e($help) . '</small>' : '') . '</div>';
+$range = fn (string $k, string $label, string $help = '') => '<div class="field"><label for="o-' . $k . '">' . e($label) . '</label><div class="range-row"><input id="o-' . $k . '" type="range" name="' . $k . '" min="0" max="1" step="0.05" value="' . e($s[$k]) . '" data-out="out-' . $k . '"><output class="range-out" id="out-' . $k . '"></output></div>' . ($help !== '' ? '<small>' . e($help) . '</small>' : '') . '</div>';
 ?>
-<div class="page-head"><h1>Opções</h1></div>
-<form method="post" action="<?= e(url('/opcoes')) ?>" class="form grid2">
+<div class="page-head">
+  <div>
+    <h1>Opções da rádio</h1>
+    <p>Os ajustes mais usados estão abertos; os técnicos ficam em "Avançado". O estúdio aberto aplica as mudanças em até 1 minuto.</p>
+  </div>
+</div>
+
+<form method="post" action="<?= e(url('/opcoes')) ?>" class="form">
   <?= csrf_field() ?>
-  <fieldset class="card">
-    <legend>Geral</legend>
-    <label>Nome da rádio <input name="station_name" value="<?= e($station['name']) ?>" maxlength="120"></label>
-    <label>Fuso horário (eventos e registro)
-      <select name="timezone"><?php foreach ($timezones as $tz): ?><option <?= $tz === $station['timezone'] ? 'selected' : '' ?>><?= e($tz) ?></option><?php endforeach ?></select>
-    </label>
-    <label class="check"><?= $chk('autostart') ?> Começar a tocar ao abrir o estúdio</label>
-    <label class="check"><?= $chk('open_last_list') ?> Abrir a última lista usada</label>
-    <label class="check"><?= $chk('dblclick_plays') ?> Duplo clique toca a faixa na hora (senão, marca como próxima)</label>
-    <label class="check"><?= $chk('allow_multi_instance') ?> Permitir mais de um estúdio aberto (os extras ficam sem eventos)</label>
-    <label class="check"><?= $chk('show_full_name') ?> Mostrar nome do arquivo em vez das tags</label>
-    <label>Formato das tags <input name="tags_format" value="<?= e($s['tags_format']) ?>"><small class="muted">Use %artist% e %title%</small></label>
-    <label class="check"><?= $chk('confirm_close') ?> Pedir confirmação ao fechar o estúdio</label>
-    <label class="check"><?= $chk('log_enabled') ?> Gravar registro de execução</label>
-  </fieldset>
+  <div class="grid2">
+    <fieldset class="card">
+      <legend>Geral</legend>
+      <div class="field"><label for="o-name">Nome da rádio</label><input id="o-name" name="station_name" value="<?= e($station['name']) ?>" maxlength="120" required autocomplete="organization"></div>
+      <?= $chk('autostart', 'Começar a tocar sozinho ao abrir o estúdio') ?>
+      <?= $chk('open_last_list', 'Abrir a última lista usada') ?>
+      <?= $chk('dblclick_plays', 'Duplo clique toca a faixa na hora', 'Desligado: o duplo clique só marca como próxima (mais seguro).') ?>
+      <details class="advanced"><summary>Avançado</summary>
+        <div class="stack-sm">
+          <div class="field"><label for="o-tz">Fuso horário da rádio</label>
+            <select id="o-tz" name="timezone"><?php foreach ($timezones as $tz): ?><option <?= $tz === $station['timezone'] ? 'selected' : '' ?>><?= e($tz) ?></option><?php endforeach ?></select>
+            <small>Usado nos eventos e no registro.</small></div>
+          <?= $chk('allow_multi_instance', 'Permitir mais de um estúdio aberto', 'Os estúdios extras ficam sem disparar eventos.') ?>
+          <?= $chk('show_full_name', 'Mostrar o nome do arquivo em vez de artista e título') ?>
+          <div class="field"><label for="o-tags">Formato do título na lista</label><input id="o-tags" name="tags_format" value="<?= e($s['tags_format']) ?>"><small>Use %artist% e %title%.</small></div>
+          <?= $chk('confirm_close', 'Pedir confirmação ao fechar o estúdio tocando') ?>
+          <?= $chk('log_enabled', 'Gravar o registro de execução') ?>
+        </div>
+      </details>
+    </fieldset>
 
-  <fieldset class="card">
-    <legend>Fundido (crossfade)</legend>
-    <label>Sobreposição entre faixas (segundos) <?= $num('overlap_s', '0.1', '0', '30') ?></label>
-    <label class="check"><?= $chk('end_detect') ?> Detector de fim de música (inicia a próxima quando o volume cai)</label>
-    <label>Limiar do detector (dB) <?= $num('end_threshold_db', '1', '-80', '0') ?></label>
-    <label class="check"><?= $chk('fade_on_overlap') ?> Baixar a faixa anterior durante a sobreposição</label>
-    <label class="check"><?= $chk('fade_on_stop') ?> Fade ao parar ou pular</label>
-    <label>Duração do fade ao parar (ms) <?= $num('fade_stop_ms', '100', '0', '10000') ?></label>
-  </fieldset>
+    <fieldset class="card">
+      <legend>Transição entre músicas</legend>
+      <?= $num('overlap_s', 'Sobreposição (segundos)', '0.1', '0', '30', 'Quanto a próxima música começa antes do fim da atual.') ?>
+      <?= $chk('end_detect', 'Detectar o fim da música pelo volume', 'Começa a próxima quando a atual fica baixa, evitando finais longos e silenciosos.') ?>
+      <details class="advanced"><summary>Avançado</summary>
+        <div class="stack-sm">
+          <?= $num('end_threshold_db', 'Volume que conta como "fim" (dB)', '1', '-80', '0', 'Mais negativo = espera ficar mais baixo. Padrão: -32.') ?>
+          <?= $chk('fade_on_overlap', 'Baixar a música anterior durante a sobreposição') ?>
+          <?= $chk('fade_on_stop', 'Baixar suavemente ao parar ou pular') ?>
+          <?= $num('fade_stop_ms', 'Duração desse fade (milissegundos)', '100', '0', '10000') ?>
+          <?= $chk('silence_detect', 'Pular a música se ela ficar muda', 'Útil para arquivos com silêncio no meio.') ?>
+          <?= $num('silence_s', 'Tempo de silêncio para pular (segundos)', '1', '2', '120') ?>
+          <?= $num('silence_db', 'Volume que conta como silêncio (dB)', '1', '-90', '-20') ?>
+        </div>
+      </details>
+    </fieldset>
 
-  <fieldset class="card">
-    <legend>Talk over, sweepers e silêncio</legend>
-    <label>Volume da música no talk over (0 a 1) <?= $num('talkover_level', '0.05', '0', '1') ?></label>
-    <label>Tempo da transição do talk over (ms) <?= $num('talkover_ms', '50', '0', '5000') ?></label>
-    <label>Volume da música durante sweepers (0 a 1) <?= $num('sweeper_duck_level', '0.05', '0', '1') ?></label>
-    <label class="check"><?= $chk('jingle_duck') ?> Abaixar a música também nas vinhetas normais</label>
-    <label class="check"><?= $chk('silence_detect') ?> Detector de silêncio (pula a faixa se ficar muda)</label>
-    <label>Tempo de silêncio (s) <?= $num('silence_s', '1', '2', '120') ?></label>
-    <label>Limiar de silêncio (dB) <?= $num('silence_db', '1', '-90', '-20') ?></label>
-  </fieldset>
+    <fieldset class="card">
+      <legend>Talk over e vinhetas</legend>
+      <?= $range('talkover_level', 'Volume da música no talk over', 'Com 25%, a voz fica clara e a música continua ao fundo.') ?>
+      <?= $range('sweeper_duck_level', 'Volume da música durante sweepers') ?>
+      <?= $chk('jingle_duck', 'Abaixar a música também nas vinhetas normais') ?>
+      <details class="advanced"><summary>Avançado</summary>
+        <?= $num('talkover_ms', 'Velocidade da transição do talk over (milissegundos)', '50', '0', '5000') ?>
+      </details>
+    </fieldset>
 
-  <fieldset class="card">
-    <legend>Hora, temperatura e umidade</legend>
-    <label class="check"><?= $chk('time_12h') ?> Relógio de 12 horas na tela</label>
-    <label>Unidade <select name="tth_units"><option value="C" <?= $s['tth_units'] === 'C' ? 'selected' : '' ?>>Celsius</option><option value="F" <?= $s['tth_units'] === 'F' ? 'selected' : '' ?>>Fahrenheit</option></select></label>
-    <label>Fonte do clima <select name="weather_source"><option value="manual" <?= $s['weather_source'] === 'manual' ? 'selected' : '' ?>>Manual</option><option value="openmeteo" <?= $s['weather_source'] === 'openmeteo' ? 'selected' : '' ?>>Automática (Open-Meteo)</option></select></label>
-    <div class="row gap"><label>Temperatura manual <?= $num('weather_temp', '1', '-60', '60') ?></label><label>Umidade manual (%) <?= $num('weather_hum', '1', '0', '100') ?></label></div>
-    <div class="row gap"><label>Latitude <input name="weather_lat" value="<?= e($s['weather_lat']) ?>" placeholder="-19.92"></label><label>Longitude <input name="weather_lon" value="<?= e($s['weather_lon']) ?>" placeholder="-43.94"></label></div>
-    <label>Não anunciar se os dados tiverem mais de (min) <?= $num('weather_max_age_min', '1', '5', '1440') ?></label>
-  </fieldset>
+    <fieldset class="card">
+      <legend>Hora, temperatura e umidade</legend>
+      <div class="radio-cards" role="radiogroup" aria-label="De onde vem o clima">
+        <label><input type="radio" name="weather_source" value="openmeteo" <?= $s['weather_source'] === 'openmeteo' ? 'checked' : '' ?>><span><b>Automático pela internet</b> <span class="tag on">recomendado</span><small>Serviço Open-Meteo, gratuito. Atualiza a cada 15 minutos.</small></span></label>
+        <label><input type="radio" name="weather_source" value="manual" <?= $s['weather_source'] !== 'openmeteo' ? 'checked' : '' ?>><span><b>Eu digito os valores</b><small>Use se não quiser conexão com o serviço de clima.</small></span></label>
+      </div>
+      <div class="field">
+        <span class="label">Local da rádio (para o clima automático)</span>
+        <div class="row"><button type="button" class="btn" data-geo>Usar a localização deste computador</button></div>
+        <div class="grid3">
+          <div class="field"><label for="o-lat">Latitude</label><input id="o-lat" name="weather_lat" value="<?= e($s['weather_lat']) ?>" placeholder="-19.9208" inputmode="decimal" pattern="-?\d{1,2}(\.\d+)?" title="Número como -19.9208"></div>
+          <div class="field"><label for="o-lon">Longitude</label><input id="o-lon" name="weather_lon" value="<?= e($s['weather_lon']) ?>" placeholder="-43.9378" inputmode="decimal" pattern="-?\d{1,3}(\.\d+)?" title="Número como -43.9378"></div>
+        </div>
+      </div>
+      <div class="grid3">
+        <?= $num('weather_temp', 'Temperatura manual', '1', '-60', '60') ?>
+        <?= $num('weather_hum', 'Umidade manual (%)', '1', '0', '100') ?>
+      </div>
+      <details class="advanced"><summary>Avançado</summary>
+        <div class="stack-sm">
+          <div class="field"><label for="o-unit">Unidade</label><select id="o-unit" name="tth_units"><option value="C" <?= $s['tth_units'] === 'C' ? 'selected' : '' ?>>Celsius</option><option value="F" <?= $s['tth_units'] === 'F' ? 'selected' : '' ?>>Fahrenheit</option></select></div>
+          <?= $num('weather_max_age_min', 'Não anunciar se os dados tiverem mais de (minutos)', '1', '5', '1440', 'Evita anunciar temperatura errada se a internet cair.') ?>
+          <?= $chk('time_12h', 'Relógio de 12 horas na tela do estúdio') ?>
+        </div>
+      </details>
+    </fieldset>
 
-  <fieldset class="card full">
-    <legend>Transmissão para servidor de streaming</legend>
-    <?php if (!$station['streaming']): ?><p class="flash flash-info">Seu plano não inclui envio para streaming. A saída de áudio pela placa de som continua disponível.</p><?php endif ?>
-    <p class="muted small">Envia o áudio do estúdio, codificado no navegador (Opus/WebM), para um servidor compatível com o protocolo <i>webcast</i>: <b>AzuraCast (Web DJ)</b> ou <b>Liquidsoap</b> com <code>input.harbor</code>. Exemplo: <code>wss://radio.seudominio.com/webdj/minha_radio</code>. Servidores só Icecast/Shoutcast, sem Liquidsoap, precisam de um encoder externo (ex.: BUTT) capturando a saída de áudio do computador.</p>
-    <label class="check"><?= $chk('stream_enabled') ?> Ativar botão "Transmitir" no estúdio</label>
-    <label>Endereço (wss://) <input name="stream_url" value="<?= e($s['stream_url']) ?>" placeholder="wss://servidor/webdj/radio"></label>
-    <div class="row gap">
-      <label>Usuário <input name="stream_user" value="<?= e($s['stream_user']) ?>" autocomplete="off"></label>
-      <label>Senha <input type="password" name="stream_pass" value="" placeholder="<?= $s['stream_pass'] !== '' ? '(mantida)' : '' ?>" autocomplete="new-password"></label>
-      <label>Taxa (kbps) <?= $num('stream_bitrate', '16', '32', '320') ?></label>
-    </div>
-  </fieldset>
+    <fieldset class="card full">
+      <legend>Transmissão para o servidor de streaming</legend>
+      <?php if (!$station['streaming']): ?>
+        <p class="notice">Seu plano não inclui o envio para streaming. O som continua saindo pela placa de som do computador.</p>
+      <?php else: ?>
+        <?= $chk('stream_enabled', 'Mostrar o botão "Transmitir" no estúdio') ?>
+        <details class="advanced" <?= $s['stream_enabled'] ? 'open' : '' ?>><summary>Dados do servidor</summary>
+          <div class="stack-sm">
+            <p class="muted small">Funciona com <b>AzuraCast (Web DJ)</b> e <b>Liquidsoap</b> (<code>input.harbor</code>). Para Icecast/Shoutcast sem Liquidsoap, use um programa como o BUTT no computador.</p>
+            <div class="field"><label for="o-surl">Endereço</label><input id="o-surl" name="stream_url" type="url" value="<?= e($s['stream_url']) ?>" placeholder="wss://radio.seudominio.com/webdj/minha_radio" pattern="wss?://.+" title="Começa com wss://"></div>
+            <div class="grid3">
+              <div class="field"><label for="o-suser">Usuário</label><input id="o-suser" name="stream_user" value="<?= e($s['stream_user']) ?>" autocomplete="off"></div>
+              <div class="field"><label for="o-spass">Senha</label><div class="pw"><input id="o-spass" type="password" name="stream_pass" value="" placeholder="<?= $s['stream_pass'] !== '' ? 'Mantida (deixe vazio)' : '' ?>" autocomplete="new-password"><button type="button" class="btn btn-ghost btn-small" data-pw-toggle aria-pressed="false">Mostrar</button></div></div>
+              <?= $num('stream_bitrate', 'Qualidade (kbps)', '16', '32', '320', '128 kbps atende a maioria.') ?>
+            </div>
+          </div>
+        </details>
+      <?php endif ?>
+    </fieldset>
+  </div>
 
-  <div class="full"><button class="btn btn-primary">Salvar opções</button></div>
+  <div class="actions sticky card" style="position:sticky;bottom:12px">
+    <span class="muted small">As mudanças valem para todos os computadores da rádio.</span>
+    <span class="spacer"></span>
+    <button class="btn btn-primary" data-busy="Salvando…">Salvar opções</button>
+  </div>
 </form>

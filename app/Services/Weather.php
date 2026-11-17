@@ -21,12 +21,18 @@ final class Weather
         $row = DB::one('SELECT weather, weather_at FROM station_state WHERE station_id = ?', [$sid]);
         $cached = json_decode((string) ($row['weather'] ?? ''), true);
         $age = $row['weather_at'] ? (time() - strtotime((string) $row['weather_at'])) / 60 : PHP_INT_MAX;
-        if (!is_array($cached) || $age > self::CACHE_MIN) {
+        // Depois de uma falha, espera 5 min antes de tentar de novo (não trava cada requisição por 5 s).
+        $failMark = STORAGE_PATH . '/tmp/weather-fail-' . $sid;
+        $recentFail = is_file($failMark) && filemtime($failMark) > time() - 300;
+        if ((!is_array($cached) || $age > self::CACHE_MIN) && !$recentFail) {
             $fresh = self::fetch((string) $s['weather_lat'], (string) $s['weather_lon']);
             if ($fresh) {
                 $cached = $fresh;
                 $age = 0;
                 DB::update('station_state', ['weather' => json_encode($fresh), 'weather_at' => now()], 'station_id = ?', [$sid]);
+                @unlink($failMark);
+            } else {
+                @touch($failMark);
             }
         }
         if (!is_array($cached)) {

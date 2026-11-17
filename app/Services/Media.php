@@ -9,6 +9,8 @@ final class Media
 {
     public const MAX_FILE_BYTES = 300 * 1024 * 1024;
     public const CHUNK_BYTES = 1024 * 1024;   // 1 MB por parte: passa em qualquer limite de upload do cPanel
+    public const PART_TTL = 7200;             // envio parado há 2 h é descartado
+    public const MAX_OPEN_UPLOADS = 3;        // envios simultâneos por rádio
 
     /** Formatos que os navegadores tocam (WMA não é suportado pelos navegadores). */
     private const TYPES = [
@@ -27,12 +29,71 @@ final class Media
 
     public static function path(array $media): string
     {
+        // Áudios de demonstração ficam em audios/ (caminho relativo, validado para não sair da pasta).
+        if (DemoLibrary::isDemo((int) $media['station_id'])) {
+            return DemoLibrary::path((string) $media['stored_name']) ?? '';
+        }
         return self::dir((int) $media['station_id']) . '/' . basename((string) $media['stored_name']);
     }
 
     public static function allowedExtensions(): array
     {
         return array_keys(self::TYPES);
+    }
+
+    public static function mimeOf(string $ext): string
+    {
+        return self::TYPES[strtolower($ext)] ?? 'application/octet-stream';
+    }
+
+    /**
+     * Título, artista e sobreposição a partir das tags ID3 e do nome do arquivo.
+     * "Artista - Título~2.5.mp3" vira artista, título e 2,5 s de sobreposição.
+     */
+    public static function describe(string $filename, array $tags): array
+    {
+        $base = pathinfo($filename, PATHINFO_FILENAME);
+        $overlap = null;
+        if (preg_match('/~(\d+(?:[.,]\d+)?)$/', $base, $m)) {
+            $overlap = (float) str_replace(',', '.', $m[1]);
+            $base = substr($base, 0, -strlen($m[0]));
+        }
+        $title = $tags['title'] ?? null;
+        $artist = $tags['artist'] ?? null;
+        if (!$title && str_contains($base, ' - ')) {
+            [$a, $t] = array_map('trim', explode(' - ', $base, 2));
+            $artist = $artist ?: $a;
+            $title = $t;
+        }
+        return ['title' => $title ? mb_substr($title, 0, 255) : null, 'artist' => $artist ? mb_substr($artist, 0, 255) : null, 'overlap_s' => $overlap];
+    }
+
+    /**
+     * Lista para as caixas de seleção (eventos, vinhetas, sweepers): primeiro os arquivos da rádio,
+     * depois os da demonstração ("Demonstração › pasta"). Pastas de locução da demo ficam de fora,
+     * porque já são usadas pelas opções "Hora certa", "Temperatura" e "Umidade".
+     */
+    public static function pickerList(int $stationId): array
+    {
+        $own = DB::all('SELECT m.id, m.filename, f.name AS folder FROM media m JOIN folders f ON f.id = m.folder_id WHERE m.station_id = ? ORDER BY f.name, m.filename LIMIT 5000', [$stationId]);
+        $demo = DemoLibrary::id();
+        if (!$demo || $demo === $stationId) {
+            return $own;
+        }
+        $shared = DB::all("SELECT m.id, m.filename, f.name AS folder FROM media m JOIN folders f ON f.id = m.folder_id
+            WHERE m.station_id = ? AND f.kind = 'normal' ORDER BY f.name, m.filename LIMIT 3000", [$demo]);
+        foreach ($shared as &$row) {
+            $row['folder'] = 'Demonstração › ' . $row['folder']; // concatenação em PHP: funciona igual no MySQL e no SQLite
+        }
+        return [...$own, ...$shared];
+    }
+
+    /** Busca uma mídia que a rádio pode ler: dela ou da demonstração. */
+    public static function readable(int $stationId, int $mediaId): ?array
+    {
+        $ids = DemoLibrary::readable($stationId);
+        $in = implode(',', array_fill(0, count($ids), '?'));
+        return DB::one("SELECT * FROM media WHERE id = ? AND station_id IN ($in)", [$mediaId, ...$ids]);
     }
 
     /** Detecta o formato pelo conteúdo (não confia na extensão enviada). */
@@ -68,19 +129,35 @@ final class Media
         if ($size <= 0 || $size > self::MAX_FILE_BYTES) {
             throw new \RuntimeException('Arquivo maior que o limite de ' . format_bytes(self::MAX_FILE_BYTES) . '.');
         }
-        $quota = (int) $station['storage_mb'] * 1024 * 1024;
-        if (Stations::usedBytes($sid) + $size > $quota) {
-            throw new \RuntimeException('Espaço do plano esgotado (' . format_bytes($quota) . '). Apague arquivos ou mude de plano.');
-        }
         $folder = DB::one('SELECT id FROM folders WHERE id = ? AND station_id = ?', [(int) ($meta['folder_id'] ?? 0), $sid]);
         if (!$folder) {
-            throw new \RuntimeException('Pasta inválida.');
+            throw new \RuntimeException('A pasta escolhida não existe mais. Recarregue a página.');
         }
         $tmpDir = STORAGE_PATH . '/tmp/' . $sid;
         if (!is_dir($tmpDir)) {
             mkdir($tmpDir, 0750, true);
         }
         $part = $tmpDir . '/' . $uploadId . '.part';
+        // Achado F3: a cota conta também os envios em andamento, e envios abandonados expiram.
+        $pendingBytes = 0;
+        $open = 0;
+        foreach (glob($tmpDir . '/*.part') ?: [] as $f) {
+            if (filemtime($f) < time() - self::PART_TTL) {
+                @unlink($f);
+                continue;
+            }
+            if ($f !== $part) {
+                $pendingBytes += (int) filesize($f);
+                $open++;
+            }
+        }
+        if ($index === 0 && $open >= self::MAX_OPEN_UPLOADS) {
+            throw new \RuntimeException('Já há ' . self::MAX_OPEN_UPLOADS . ' envios em andamento. Espere terminarem e tente de novo.');
+        }
+        $quota = (int) $station['storage_mb'] * 1024 * 1024;
+        if (Stations::usedBytes($sid) + $pendingBytes + $size > $quota) {
+            throw new \RuntimeException('Não cabe no espaço do plano (' . format_bytes($quota) . '). Apague arquivos que não usa ou fale com o suporte sobre outro plano.');
+        }
         $expectedOffset = is_file($part) ? filesize($part) : 0;
         if ($index === 0 && $expectedOffset > 0) {
             unlink($part);
@@ -103,7 +180,19 @@ final class Media
             @unlink($part);
             throw new \RuntimeException('O arquivo chegou incompleto. Tente de novo.');
         }
-        return self::ingest($sid, (int) $folder['id'], $part, (string) ($meta['filename'] ?? 'audio'), (int) ($meta['duration_ms'] ?? 0));
+        // Recheca a cota com trava: dois envios terminando juntos não estouram o limite.
+        $lock = fopen($tmpDir . '/.quota.lock', 'c');
+        flock($lock, LOCK_EX);
+        try {
+            if (Stations::usedBytes($sid) + $size > $quota) {
+                @unlink($part);
+                throw new \RuntimeException('Não cabe no espaço do plano (' . format_bytes($quota) . '). Apague arquivos que não usa ou fale com o suporte.');
+            }
+            return self::ingest($sid, (int) $folder['id'], $part, (string) ($meta['filename'] ?? 'audio'), (int) ($meta['duration_ms'] ?? 0));
+        } finally {
+            flock($lock, LOCK_UN);
+            fclose($lock);
+        }
     }
 
     public static function ingest(int $stationId, int $folderId, string $file, string $originalName, int $durationMs): array
@@ -120,18 +209,7 @@ final class Media
             throw new \RuntimeException('Não foi possível gravar o arquivo.');
         }
         chmod($dest, 0640);
-        $tags = $type === 'mp3' ? Id3::read($dest) : ['title' => null, 'artist' => null];
-        $base = pathinfo($name, PATHINFO_FILENAME);
-        // "Nome~2.5.mp3": sobreposição específica do arquivo, em segundos.
-        $overlap = null;
-        if (preg_match('/~(\d+(?:[.,]\d+)?)$/', $base, $m)) {
-            $overlap = (float) str_replace(',', '.', $m[1]);
-            $base = substr($base, 0, -strlen($m[0]));
-        }
-        if (!$tags['title'] && str_contains($base, ' - ')) {
-            [$a, $t] = array_map('trim', explode(' - ', $base, 2));
-            $tags = ['artist' => $tags['artist'] ?: $a, 'title' => $t];
-        }
+        $meta = self::describe($name, $type === 'mp3' ? Id3::read($dest) : ['title' => null, 'artist' => null]);
         $id = DB::insert('media', [
             'station_id' => $stationId,
             'folder_id' => $folderId,
@@ -139,16 +217,19 @@ final class Media
             'stored_name' => $stored,
             'mime' => self::TYPES[$type],
             'size_bytes' => filesize($dest),
-            'duration_ms' => max(0, min($durationMs, 86400000)),
-            'title' => $tags['title'] ?? null,
-            'artist' => $tags['artist'] ?? null,
-            'overlap_s' => $overlap,
+            'duration_ms' => max(0, min($durationMs ?: AudioInfo::durationMs($dest, $type), 86400000)),
+            'title' => $meta['title'],
+            'artist' => $meta['artist'],
+            'overlap_s' => $meta['overlap_s'],
         ]);
         return DB::one('SELECT * FROM media WHERE id = ?', [$id]);
     }
 
     public static function delete(array $media): void
     {
+        if (DemoLibrary::isDemo((int) $media['station_id'])) {
+            return; // a demonstração é somente leitura
+        }
         @unlink(self::path($media));
         DB::run('DELETE FROM media WHERE id = ? AND station_id = ?', [$media['id'], $media['station_id']]);
     }
@@ -157,7 +238,7 @@ final class Media
     public static function stream(array $media): never
     {
         $path = self::path($media);
-        if (!is_file($path)) {
+        if ($path === '' || !is_file($path)) {
             abort(404);
         }
         $size = filesize($path);
@@ -206,12 +287,14 @@ final class Media
     /** Sorteia uma faixa da pasta (e subpastas) sem repetir até tocar todas. */
     public static function randomFrom(int $stationId, int $folderId): ?array
     {
-        $ids = self::folderTree($stationId, $folderId);
+        $ids = self::folderTree($stationId, $folderId, true);
         if (!$ids) {
             return null;
         }
+        $owners = DemoLibrary::readable($stationId);
         $in = implode(',', array_fill(0, count($ids), '?'));
-        $all = array_map('intval', array_column(DB::all("SELECT id FROM media WHERE station_id = ? AND folder_id IN ($in)", [$stationId, ...$ids]), 'id'));
+        $inOwners = implode(',', array_fill(0, count($owners), '?'));
+        $all = array_map('intval', array_column(DB::all("SELECT id FROM media WHERE station_id IN ($inOwners) AND folder_id IN ($in)", [...$owners, ...$ids]), 'id'));
         if (!$all) {
             return null;
         }
@@ -231,10 +314,14 @@ final class Media
         });
     }
 
-    /** IDs da pasta e de todas as subpastas. */
-    public static function folderTree(int $stationId, int $folderId): array
+    /**
+     * IDs da pasta e de todas as subpastas.
+     * $readOnly = true também aceita pastas da demonstração (só para ler/tocar, nunca para apagar).
+     */
+    public static function folderTree(int $stationId, int $folderId, bool $readOnly = false): array
     {
-        $folders = DB::all('SELECT id, parent_id FROM folders WHERE station_id = ?', [$stationId]);
+        $owners = $readOnly ? DemoLibrary::readable($stationId) : [$stationId];
+        $folders = DB::all('SELECT id, parent_id FROM folders WHERE station_id IN (' . implode(',', array_fill(0, count($owners), '?')) . ')', $owners);
         $children = [];
         foreach ($folders as $f) {
             $children[(int) $f['parent_id']][] = (int) $f['id'];
@@ -266,6 +353,7 @@ final class Media
             'duration_ms' => (int) $m['duration_ms'],
             'overlap_s' => $m['overlap_s'] !== null ? (float) $m['overlap_s'] : null,
             'folder_id' => (int) $m['folder_id'],
+            'demo' => DemoLibrary::isDemo((int) $m['station_id']),
         ];
     }
 }
