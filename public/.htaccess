@@ -1,0 +1,12 @@
+# Apache / cPanel: tudo passa pelo front controller
+Options -Indexes
+DirectoryIndex index.php
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^ index.php [L,QSA]
+
+<IfModule mod_headers.c>
+  <FilesMatch "\.(css|js|svg|png|woff2)$">
+    Header set Cache-Control "public, max-age=604800"
+  </FilesMatch>
+</IfModule>

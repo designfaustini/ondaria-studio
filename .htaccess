@@ -1,0 +1,8 @@
+# Usado só quando o projeto inteiro foi enviado para dentro de public_html
+# (sem poder apontar o domínio para a pasta public/). Bloqueia o código e os dados
+# e encaminha todas as requisições para public/.
+Options -Indexes
+RewriteEngine On
+RewriteRule ^(app|bin|database|storage|views|docs|tests)(/|$) - [F,L]
+RewriteRule ^\.env - [F,L]
+RewriteRule ^(?!public/)(.*)$ public/$1 [L]
